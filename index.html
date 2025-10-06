@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>MQTT Relay Control</title>
+</head>
+<body>
+<h2>Relay Control</h2>
+<button onclick="toggleRelay()">Toggle Relay 1</button>
+<p id="status"></p>
+
+<script>
+let state = 0;
+
+function toggleRelay(){
+    state = state ? 0 : 1;
+    fetch("/api/control", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({io_1: state})
+    }).then(res => res.json()).then(data => {
+        document.getElementById("status").innerText = "Sent: " + JSON.stringify(data);
+    });
+}
+
+setInterval(()=>{
+    fetch("/api/state").then(res=>res.json()).then(data=>{
+        document.getElementById("status").innerText = JSON.stringify(data);
+    });
+}, 2000);
+</script>
+</body>
+</html>
