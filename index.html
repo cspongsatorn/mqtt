@@ -1,41 +1,41 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Relay Control</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 40px; }
+    button { padding: 10px 20px; font-size: 18px; margin: 10px; cursor: pointer; }
+  </style>
 </head>
 <body>
-  <h1>Relay Control</h1>
-
-  <button onclick="setRelay(1, 1)">เปิด Relay 1</button>
-  <button onclick="setRelay(1, 0)">ปิด Relay 1</button>
-
-  <div id="status"></div>
+  <h1>Relay 1 Control</h1>
+  <button id="on">ON</button>
+  <button id="off">OFF</button>
+  <p id="status">Status: —</p>
 
   <script>
-    const statusDiv = document.getElementById("status");
+    const statusEl = document.getElementById("status");
 
-    // WebSocket สำหรับรับ callback
-    const ws = new WebSocket("ws://localhost:8080");
-
-    ws.onopen = () => console.log("Connected to WS Server");
-
+    const ws = new WebSocket("wss://" + window.location.host);
+    ws.onopen = () => statusEl.textContent = "Status: WebSocket Connected ✅";
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === "status") {
-        statusDiv.innerHTML = `Relay ${data.relay} -> ${data.value ? "เปิดแล้ว" : "ปิดแล้ว"}`;
+      if (data.type === "callback") {
+        statusEl.textContent = `Relay ${data.relay} ${data.value ? "ON" : "OFF"}`;
       }
     };
 
-    async function setRelay(relay, value) {
-      const res = await fetch("/api/setRelay", {
+    async function setRelay(value) {
+      await fetch("/api/setRelay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: 1, relay: relay, value: value })
+        body: JSON.stringify({ id: 1, value })
       });
-      const data = await res.json();
-      console.log(data);
     }
+
+    document.getElementById("on").onclick = () => setRelay(1);
+    document.getElementById("off").onclick = () => setRelay(0);
   </script>
 </body>
 </html>

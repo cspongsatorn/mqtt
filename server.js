@@ -1,96 +1,87 @@
-import express from "express";
-import mysql from "mysql2/promise";
-import { WebSocketServer } from "ws";
-import bodyParser from "body-parser";
-import path from "path";
-import { fileURLToPath } from "url";
+const express = require("express");
+const http = require("http");
+const WebSocket = require("ws");
+const mysql = require("mysql2/promise");
+const path = require("path");
 
+// สร้าง Express app
 const app = express();
-const PORT = 3000;
+app.use(express.json());
 
-// Path สำหรับหน้าเว็บ
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-app.use(bodyParser.json());
-
-// เชื่อมต่อ MySQL
-const pool = mysql.createPool({
-  host: "localhost",
-  user: "root",
-  password: "",
-  database: "test_sw",
-  port: 3306
-});
-
-// ส่งหน้าเว็บ
+// serve หน้าเว็บ
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// WebSocket server (port 8080)
-const wss = new WebSocketServer({ port: 8080, host: "0.0.0.0" });
-console.log("WebSocket server listening on port 8080");
-let webClients = [];
+// ตั้งค่าฐานข้อมูล TiDB Cloud
+let db;
+(async () => {
+  db = await mysql.createConnection({
+    host: "gateway01.ap-southeast-1.prod.aws.tidbcloud.com",
+    user: "3r7jSwUzoNxFYHZ.root",
+    password: "xsoDcx5QsE01vL4M",
+    database: "test",
+    port: 4000,
+    ssl: { rejectUnauthorized: true },
+  });
+  console.log("✅ Connected to TiDB Cloud");
+})();
 
-wss.on("connection", (ws) => {
-  console.log("Client connected");
+// API สำหรับทดสอบ (get id และ IO_1)
+app.get("/api/get/:id", async (req, res) => {
+  const [rows] = await db.execute("SELECT * FROM box WHERE id=?", [
+    req.params.id,
+  ]);
+  res.json(rows[0] || {});
+});
 
-  ws.on("message", (message) => {
-    console.log("Received:", message.toString());
+// API สำหรับอัปเดตรีเลย์
+app.post("/api/setRelay", async (req, res) => {
+  const { id, value } = req.body;
+  console.log("SetRelay API:", id, value);
+  await db.execute("UPDATE box SET IO_1=? WHERE id=?", [value, id]);
 
-    try {
-      const data = JSON.parse(message.toString());
-      if (data.type === "status") {
-        // ส่ง callback ไปยังเว็บ client
-        webClients.forEach(client => {
-          if (client.readyState === 1) {
-            client.send(JSON.stringify(data));
-          }
-        });
-      }
-    } catch (err) {
-      console.error(err);
+  // ส่งไปให้ ESP32 ผ่าน WS
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ type: "set", relay: 1, value }));
     }
   });
 
-  // จัดเก็บ web client
-  webClients.push(ws);
+  res.json({ success: true });
+});
+
+// สร้าง HTTP server + WebSocket
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+// WebSocket events (with heartbeat)
+wss.on("connection", (ws, req) => {
+  console.log("🔌 WS client connected:", req.socket.remoteAddress);
+
+  ws.isAlive = true;
+  ws.on("pong", () => (ws.isAlive = true));
+
+  ws.on("message", (msg) => {
+    console.log("📩 Message:", msg.toString());
+  });
 
   ws.on("close", () => {
-    webClients = webClients.filter(client => client !== ws);
+    console.log("❌ WS client disconnected");
   });
 });
 
-// API: หน้าเว็บส่งคำสั่งเปิดรีเลย์
-app.post("/api/setRelay", async (req, res) => {
-  const { id, relay, value } = req.body;
-  try {
-    await pool.query(
-      `UPDATE BOX SET IO_${relay} = ? WHERE ID = ?`,
-      [value, id]
-    );
+// Heartbeat ตรวจสอบ connection ทุก 30 วินาที
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
 
-    const data = JSON.stringify({
-      type: "set",
-      relay: relay,
-      value: value
-    });
-
-    // ส่ง WebSocket Push ไป ESP32
-    wss.clients.forEach((client) => {
-      if (client.readyState === 1) {
-        client.send(data);
-      }
-    });
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running at http://192.168.1.17:${PORT}`);
-});
+// Render จะ map port เอง
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () =>
+  console.log(`✅ HTTP + WSS listening on port ${PORT}`)
+);
