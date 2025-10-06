@@ -5,6 +5,10 @@ const mqtt = require("mqtt");
 const app = express();
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.sendFile(__dirname + "/index.html");
+});
+
 const db = mysql.createConnection({
     host: "gateway01.ap-southeast-1.prod.aws.tidbcloud.com",
     user: "3r7jSwUzoNxFYHZ.root",
