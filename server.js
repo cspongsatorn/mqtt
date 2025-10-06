@@ -4,7 +4,7 @@ const WebSocket = require("ws");
 const mysql = require("mysql2/promise");
 const path = require("path");
 
-// สร้าง Express app
+// ===== Express App =====
 const app = express();
 app.use(express.json());
 
@@ -13,49 +13,70 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// ตั้งค่าฐานข้อมูล TiDB Cloud
-let db;
-(async () => {
-  db = await mysql.createConnection({
-    host: "gateway01.ap-southeast-1.prod.aws.tidbcloud.com",
-    user: "3r7jSwUzoNxFYHZ.root",
-    password: "xsoDcx5QsE01vL4M",
-    database: "test",
-    port: 4000,
-    ssl: { rejectUnauthorized: true },
-  });
-  console.log("✅ Connected to TiDB Cloud");
-})();
+// ===== MySQL (TiDB Cloud) Connection Pool =====
+const pool = mysql.createPool({
+  host: "gateway01.ap-southeast-1.prod.aws.tidbcloud.com",
+  user: "3r7jSwUzoNxFYHZ.root",
+  password: "xsoDcx5QsE01vL4M",
+  database: "test",
+  port: 4000,
+  ssl: { rejectUnauthorized: true },
+  waitForConnections: true,
+  connectionLimit: 5,
+  queueLimit: 0,
+});
 
-// API สำหรับทดสอบ (get id และ IO_1)
+pool.getConnection()
+  .then(conn => {
+    console.log("✅ Connected to TiDB Cloud via pool");
+    conn.release();
+  })
+  .catch(err => {
+    console.error("❌ Database connection error:", err.message);
+  });
+
+// ===== API Routes =====
+
+// GET: อ่านข้อมูลจากตาราง box ตาม id
 app.get("/api/get/:id", async (req, res) => {
-  const [rows] = await db.execute("SELECT * FROM box WHERE id=?", [
-    req.params.id,
-  ]);
-  res.json(rows[0] || {});
+  try {
+    const [rows] = await pool.execute("SELECT * FROM box WHERE id=?", [
+      req.params.id,
+    ]);
+    res.json(rows[0] || {});
+  } catch (err) {
+    console.error("❌ DB Error (GET):", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
-// API สำหรับอัปเดตรีเลย์
+// POST: อัปเดตรีเลย์ และส่งไปให้ ESP32 ผ่าน WS
 app.post("/api/setRelay", async (req, res) => {
-  const { id, value } = req.body;
-  console.log("SetRelay API:", id, value);
-  await db.execute("UPDATE box SET IO_1=? WHERE id=?", [value, id]);
+  try {
+    const { id, value } = req.body;
+    console.log("SetRelay API:", id, value);
 
-  // ส่งไปให้ ESP32 ผ่าน WS
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ type: "set", relay: 1, value }));
-    }
-  });
+    await pool.execute("UPDATE box SET IO_1=? WHERE id=?", [value, id]);
 
-  res.json({ success: true });
+    // ส่งต่อไป ESP32
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({ type: "set", relay: 1, value }));
+      }
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ DB Error (SET):", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
-// สร้าง HTTP server + WebSocket
+// ===== WebSocket Server =====
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// WebSocket events (with heartbeat)
+// WS Events + heartbeat
 wss.on("connection", (ws, req) => {
   console.log("🔌 WS client connected:", req.socket.remoteAddress);
 
@@ -71,7 +92,7 @@ wss.on("connection", (ws, req) => {
   });
 });
 
-// Heartbeat ตรวจสอบ connection ทุก 30 วินาที
+// ตรวจสอบ connection ทุก 30 วิ
 setInterval(() => {
   wss.clients.forEach((ws) => {
     if (!ws.isAlive) return ws.terminate();
@@ -80,7 +101,7 @@ setInterval(() => {
   });
 }, 30000);
 
-// Render จะ map port เอง
+// ===== Start Server =====
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () =>
   console.log(`✅ HTTP + WSS listening on port ${PORT}`)
