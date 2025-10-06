@@ -1,32 +1,41 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>MQTT Relay Control</title>
+  <meta charset="UTF-8">
+  <title>Relay Control</title>
 </head>
 <body>
-<h2>Relay Control</h2>
-<button onclick="toggleRelay()">Toggle Relay 1</button>
-<p id="status"></p>
+  <h1>Relay Control</h1>
 
-<script>
-let state = 0;
+  <button onclick="setRelay(1, 1)">เปิด Relay 1</button>
+  <button onclick="setRelay(1, 0)">ปิด Relay 1</button>
 
-function toggleRelay(){
-    state = state ? 0 : 1;
-    fetch("/api/control", {
+  <div id="status"></div>
+
+  <script>
+    const statusDiv = document.getElementById("status");
+
+    // WebSocket สำหรับรับ callback
+    const ws = new WebSocket("ws://localhost:8080");
+
+    ws.onopen = () => console.log("Connected to WS Server");
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "status") {
+        statusDiv.innerHTML = `Relay ${data.relay} -> ${data.value ? "เปิดแล้ว" : "ปิดแล้ว"}`;
+      }
+    };
+
+    async function setRelay(relay, value) {
+      const res = await fetch("/api/setRelay", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({io_1: state})
-    }).then(res => res.json()).then(data => {
-        document.getElementById("status").innerText = "Sent: " + JSON.stringify(data);
-    });
-}
-
-setInterval(()=>{
-    fetch("/api/state").then(res=>res.json()).then(data=>{
-        document.getElementById("status").innerText = JSON.stringify(data);
-    });
-}, 2000);
-</script>
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: 1, relay: relay, value: value })
+      });
+      const data = await res.json();
+      console.log(data);
+    }
+  </script>
 </body>
 </html>
